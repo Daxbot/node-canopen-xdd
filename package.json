@@ -1,6 +1,6 @@
 {
   "name": "canopen-xdd",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Browser-compatible CANopen XDD (XML Device Description) parse and serialize",
   "main": "index.js",
   "scripts": {
