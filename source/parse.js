@@ -121,6 +121,25 @@ function _getRangeFromParam(param) {
     return undefined;
 }
 
+/**
+* Extract all <q1:property> values from a parameter node into a plain map.
+* @param {object} param - parameter node (already _forceExplicitArray'd)
+* @returns {object} { name: value, ... }
+* @private
+*/
+function _getPropertiesFromParam(param) {
+    const result = {};
+    if (!param) return result;
+    // fast-xml-parser with removeNSPrefix:true turns <q1:property> → 'property'
+    for (const p of (param['property'] || [])) {
+        const a = p['$'] || {};
+        if (a.name && a.value !== undefined) {
+            result[a.name] = a.value;
+        }
+    }
+    return result;
+}
+
 // ─── Entry builders ───────────────────────────────────────────────────────────
 
 /** Build a VAR/DOMAIN entry from CANopenObject/SubObject attrs + parameter. @private */
@@ -160,7 +179,11 @@ function _buildVarEntry(attrs, param, objectType) {
     }
 
     const pdoMap   = attrs.PDOmapping;
-    const pdoMapping = pdoMap !== undefined && pdoMap !== 'no';
+    // Preserve the direction string; fall back to false when absent
+    const pdoMapping = (pdoMap !== undefined && pdoMap !== 'no') ? pdoMap : false;
+
+    const props = param ? _getPropertiesFromParam(param) : {};
+    const stringLength = props['CO_stringLengthMin'] ? parseInt(props['CO_stringLengthMin']) : undefined;
 
     return {
         parameterName: name,
@@ -171,6 +194,7 @@ function _buildVarEntry(attrs, param, objectType) {
         pdoMapping,
         lowLimit,
         highLimit,
+        ...(stringLength !== undefined ? { stringLength } : {}),
     };
 }
 
@@ -363,7 +387,12 @@ function parseXdd(xmlString) {
                     const param = uid ? parameterMap[uid] : null;
 
                     if (objectType === ObjectType.VAR || objectType === ObjectType.DOMAIN) {
-                        objects[index] = _buildVarEntry(attrs, param, objectType);
+                        const varEntry = _buildVarEntry(attrs, param, objectType);
+                        const varProps = param ? _getPropertiesFromParam(param) : {};
+                        if (varProps['CO_storageGroup']) {
+                            varEntry.storageLocation = varProps['CO_storageGroup'];
+                        }
+                        objects[index] = varEntry;
                     } else if (
                         objectType === ObjectType.ARRAY ||
                         objectType === ObjectType.RECORD ||
@@ -418,7 +447,12 @@ function parseXdd(xmlString) {
                             };
                         }
 
-                        objects[index] = { parameterName: name, objectType, subObjects: subs };
+                        const topProps = param ? _getPropertiesFromParam(param) : {};
+                        const topEntry = { parameterName: name, objectType, subObjects: subs };
+                        if (topProps['CO_storageGroup']) {
+                            topEntry.storageLocation = topProps['CO_storageGroup'];
+                        }
+                        objects[index] = topEntry;
                     }
                 }
             }
