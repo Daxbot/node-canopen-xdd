@@ -55,15 +55,18 @@ function buildTestModel() {
                 pdoMapping:    false,
             },
             0x2003: {
-                parameterName: 'Device name',
-                objectType:    ObjectType.VAR,
-                dataType:      DataType.VISIBLE_STRING,
-                accessType:    AccessType.READ_ONLY,
-                pdoMapping:    false,
+                parameterName:   'Device name',
+                objectType:      ObjectType.VAR,
+                dataType:        DataType.VISIBLE_STRING,
+                accessType:      AccessType.READ_ONLY,
+                pdoMapping:      false,
+                stringLength:    32,      // CO_stringLengthMin
+                storageLocation: 'FRAM',  // CO_storageGroup
             },
             0x2010: {
-                parameterName: 'Test array',
-                objectType:    ObjectType.ARRAY,
+                parameterName:   'Test array',
+                objectType:      ObjectType.ARRAY,
+                storageLocation: 'PERSIST_COMM', // CO_storageGroup on a container (top-level)
                 subObjects: {
                     0: { parameterName: 'Max sub-index', objectType: ObjectType.VAR, dataType: DataType.UNSIGNED8, accessType: AccessType.READ_ONLY, defaultValue: '3', pdoMapping: false },
                     1: { parameterName: 'Element 1', objectType: ObjectType.VAR, dataType: DataType.UNSIGNED16, accessType: AccessType.READ_WRITE, defaultValue: '100', pdoMapping: false },
@@ -76,7 +79,7 @@ function buildTestModel() {
                 objectType:    ObjectType.RECORD,
                 subObjects: {
                     0: { parameterName: 'Max sub-index', objectType: ObjectType.VAR, dataType: DataType.UNSIGNED8, accessType: AccessType.READ_ONLY, defaultValue: '3', pdoMapping: false },
-                    1: { parameterName: 'Field A', objectType: ObjectType.VAR, dataType: DataType.INTEGER32,  accessType: AccessType.READ_ONLY,  pdoMapping: false },
+                    1: { parameterName: 'Field A', objectType: ObjectType.VAR, dataType: DataType.VISIBLE_STRING, accessType: AccessType.READ_ONLY, pdoMapping: false, stringLength: 16 },
                     2: { parameterName: 'Field B', objectType: ObjectType.VAR, dataType: DataType.REAL32,    accessType: AccessType.READ_WRITE, defaultValue: '0', pdoMapping: false },
                     3: { parameterName: 'Field C', objectType: ObjectType.VAR, dataType: DataType.UNSIGNED8, accessType: AccessType.READ_WRITE, pdoMapping: false },
                 },
@@ -142,7 +145,7 @@ describe('canopen-xdd', function () {
             expect(obj).to.exist;
             expect(obj.objectType).to.equal(ObjectType.RECORD);
             expect(obj.subObjects[1].parameterName).to.equal('Field A');
-            expect(obj.subObjects[1].dataType).to.equal(DataType.INTEGER32);
+            expect(obj.subObjects[1].dataType).to.equal(DataType.VISIBLE_STRING);
             expect(obj.subObjects[2].dataType).to.equal(DataType.REAL32);
         });
 
@@ -206,6 +209,32 @@ describe('canopen-xdd', function () {
         it('should preserve vendorName after round-trip', function () {
             const reparsed = parseXdd(serializeXdd(buildTestModel()));
             expect(reparsed.deviceInfo.vendorName).to.equal('Test Vendor');
+        });
+
+        it('should preserve stringLength (CO_stringLengthMin) on a VAR', function () {
+            const reparsed = parseXdd(serializeXdd(buildTestModel()));
+            expect(reparsed.objects[0x2003].stringLength).to.equal(32);
+        });
+
+        it('should preserve stringLength (CO_stringLengthMin) on a sub-object', function () {
+            const reparsed = parseXdd(serializeXdd(buildTestModel()));
+            expect(reparsed.objects[0x2020].subObjects[1].stringLength).to.equal(16);
+        });
+
+        it('should preserve storageLocation (CO_storageGroup) on a VAR', function () {
+            const reparsed = parseXdd(serializeXdd(buildTestModel()));
+            expect(reparsed.objects[0x2003].storageLocation).to.equal('FRAM');
+        });
+
+        it('should preserve storageLocation (CO_storageGroup) on a container', function () {
+            const reparsed = parseXdd(serializeXdd(buildTestModel()));
+            expect(reparsed.objects[0x2010].storageLocation).to.equal('PERSIST_COMM');
+        });
+
+        it('should emit the CO_ property tags in the serialized XML', function () {
+            const xml = serializeXdd(buildTestModel());
+            expect(xml).to.include('CO_stringLengthMin');
+            expect(xml).to.include('CO_storageGroup');
         });
     });
 });

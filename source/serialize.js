@@ -109,6 +109,23 @@ function _formatDefaultValue(value) {
 
 // ─── XML fragment builders ────────────────────────────────────────────────────
 
+/**
+ * Build CANopenNode custom <q1:property> tags for an entry.
+ * - CO_stringLengthMin (model `stringLength`): minimum string buffer size.
+ * - CO_storageGroup (model `storageLocation`): storage group, top-level objects only.
+ * @private
+ */
+function _buildPropertiesXml(entry) {
+    let xml = '';
+    if (entry.stringLength !== undefined && entry.stringLength !== null && entry.stringLength !== '') {
+        xml += `\n          <q1:property name="CO_stringLengthMin" value="${_xmlEscape(entry.stringLength)}" />`;
+    }
+    if (entry.storageLocation) {
+        xml += `\n          <q1:property name="CO_storageGroup" value="${_xmlEscape(entry.storageLocation)}" />`;
+    }
+    return xml;
+}
+
 /** @private */
 function _buildVarParameterXml(uid, entry) {
     const accessStr = ACCESS_TO_XDD[entry.accessType] || 'readWrite';
@@ -130,25 +147,28 @@ function _buildVarParameterXml(uid, entry) {
           </q1:allowedValues>`;
     }
 
+    const propsXml = _buildPropertiesXml(entry);
+
     if (entry.objectType === ObjectType.DOMAIN) {
         return `          <q1:parameter uniqueID="${uid}">
             <label lang="en">${label}</label>
-            <${dataTag} />
+            <${dataTag} />${propsXml}
           </q1:parameter>`;
     }
 
     return `          <q1:parameter uniqueID="${uid}" access="${accessStr}">
             <label lang="en">${label}</label>
-            <${dataTag} />${defaultXml}${limitsXml}
+            <${dataTag} />${defaultXml}${limitsXml}${propsXml}
           </q1:parameter>`;
 }
 
 /** @private */
-function _buildRefParameterXml(uid, parameterName, typeUid) {
-    const label = _xmlEscape(parameterName || '');
+function _buildRefParameterXml(uid, entry, typeUid) {
+    const label = _xmlEscape(entry.parameterName || '');
+    const propsXml = _buildPropertiesXml(entry);
     return `          <q1:parameter uniqueID="${uid}">
             <label lang="en">${label}</label>
-            <q1:dataTypeIDRef uniqueIDRef="${typeUid}" />
+            <q1:dataTypeIDRef uniqueIDRef="${typeUid}" />${propsXml}
           </q1:parameter>`;
 }
 
@@ -277,7 +297,7 @@ function serializeXdd(model, outputFileName) {
                 ? `UID_ARR_${indexHex}`
                 : `UID_REC_${indexHex}`;
 
-            parameters.push(_buildRefParameterXml(uid, entry.parameterName, dtUid));
+            parameters.push(_buildRefParameterXml(uid, entry, dtUid));
 
             if (objectType === ObjectType.ARRAY) {
                 dataTypeArrays.push(_buildArrayTypeDefXml(dtUid, entry));
