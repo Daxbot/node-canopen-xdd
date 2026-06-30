@@ -1,6 +1,6 @@
 {
   "name": "canopen-xdd",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Browser-compatible CANopen XDD (XML Device Description) parse and serialize",
   "main": "index.js",
   "scripts": {
@@ -23,7 +23,7 @@
   },
   "homepage": "https://daxbot.com/open-source",
   "dependencies": {
-    "canopen-eds": "^0.1.0",
+    "canopen-eds": "^0.3.0",
     "fast-xml-parser": "^5.0.0"
   },
   "devDependencies": {
