@@ -112,7 +112,8 @@ function getDataProperties(dataType, defaultValue, stringLength, indexH) {
                 props.length = 1;
                 props.cType = 'bool_t';
                 if (valueDefined) {
-                    props.cValue = (String(defaultValue).toLowerCase() === 'false' || defaultValue === 0) ? 'false' : 'true';
+                    const boolStr = String(defaultValue).toLowerCase();
+                    props.cValue = (boolStr === 'false' || boolStr === '0' || defaultValue === 0) ? 'false' : 'true';
                 }
 
                 break;
@@ -367,16 +368,16 @@ function getAttributes(entry, cTypeMultibyte, cTypeString, pdoFlag) {
         attributes.push('ODA_SDO_W');
     }
 
+    if (pdoFlag) {
+        attributes.push(pdoFlag);
+    }
+
     if (cTypeMultibyte) {
         attributes.push('ODA_MB');
     }
 
     if (cTypeString) {
         attributes.push('ODA_STR');
-    }
-
-    if (pdoFlag) {
-        attributes.push(pdoFlag);
     }
 
     return attributes.length > 0 ? attributes.join(' | ') : '0';
@@ -532,7 +533,10 @@ function prepareData(eds) {
             const pdoFlag = getPdoFlag(index, entry.pdoMapping, tpdoMapped, rpdoMapped);
             const attr = getAttributes(entry, dataProps.cTypeMultibyte, dataProps.cTypeString, pdoFlag);
 
-            if (dataProps.length > 0) {
+            // Write-only with no default value: no storage, but preserve dataLength
+            const skipStorage = entry.accessType === 'wo' && dataProps.cValue === null;
+
+            if (dataProps.length > 0 && !skipStorage) {
                 const hasArraySuffix = dataProps.cTypeArray && dataProps.cTypeArray.startsWith('[');
                 groupFields[storageGroup].push(
                     `    ${dataProps.cType} x${varName}${dataProps.cTypeArray};`
@@ -555,7 +559,7 @@ function prepareData(eds) {
                 ODObjs.push(`    .o_${varName} = {`);
                 ODObjs.push(`        .dataOrig = NULL,`);
                 ODObjs.push(`        .attribute = ${attr},`);
-                ODObjs.push(`        .dataLength = 0`);
+                ODObjs.push(`        .dataLength = ${dataProps.length > 0 ? dataProps.length : 0}`);
                 ODObjs.push(`    },`);
             }
 
@@ -579,9 +583,10 @@ function prepareData(eds) {
                 const sub0Attr = getAttributes(
                     sub0 ?? { accessType: 'ro' }, false, false, null
                 );
+                const elemPdoFlag = getPdoFlag(index, firstDataSub?.pdoMapping, tpdoMapped, rpdoMapped);
                 const elemAttr = getAttributes(
                     firstDataSub ?? { accessType: 'ro' },
-                    elemProps.cTypeMultibyte, elemProps.cTypeString, null
+                    elemProps.cTypeMultibyte, elemProps.cTypeString, elemPdoFlag
                 );
 
                 // sub0 struct field + init
@@ -693,7 +698,7 @@ function prepareData(eds) {
                 `#define OD_ENTRY_H${varName} &OD->list[${ODList.length}]`
             );
             ODList.push(
-                `{0x${indexH}, 0x${subEntriesCount.toString(16).padStart(2, '0')}, ODT_${objectTypeStr}, &ODObjs.o_${varName}, NULL}`
+                `{0x${indexH}, 0x${subEntriesCount.toString(16).padStart(2, '0').toUpperCase()}, ODT_${objectTypeStr}, &ODObjs.o_${varName}, NULL}`
             );
 
             if (countLabel) {
@@ -792,7 +797,7 @@ function exportODHeader(filename, odname, eds, prepared) {
     Sizes of OD arrays
 *******************************************************************************/`);
 
-    for (const [key, value] of Object.entries(prepared.ODArrSize)) {
+    for (const [key, value] of Object.entries(prepared.ODArrSize).sort((a, b) => parseInt(a[0], 16) - parseInt(b[0], 16))) {
         lines.push(`#define ${odname}_CNT_ARR_${key} ${value}`);
     }
 
@@ -830,6 +835,7 @@ function exportODHeader(filename, odname, eds, prepared) {
 #define ${odname}_ATTR_OD
 #endif
 extern ${odname}_ATTR_OD OD_t *${odname};
+
 
 /*******************************************************************************
     Object dictionary entries - shortcuts
@@ -956,6 +962,16 @@ function exportODSource(filename, odname, prepared) {
         lines.push('');
     }
 
+    // Add extra blank lines before ODObjs section to match reference style
+    lines.push('');
+    lines.push('');
+
+    // Remove trailing comma from last ODObjs entry
+    const lastCommaIdx = prepared.ODObjs.lastIndexOf('    },');
+    const odObjsOut = lastCommaIdx !== -1
+        ? [...prepared.ODObjs.slice(0, lastCommaIdx), '    }', ...prepared.ODObjs.slice(lastCommaIdx + 1)]
+        : prepared.ODObjs;
+
     lines.push(`/*******************************************************************************
     All OD objects (constant definitions)
 *******************************************************************************/
@@ -964,8 +980,9 @@ typedef struct {
 } ${odname}Objs_t;
 
 static CO_PROGMEM ${odname}Objs_t ${odname}Objs = {
-${prepared.ODObjs.join('\n')}
+${odObjsOut.join('\n')}
 };
+
 
 /*******************************************************************************
     Object dictionary

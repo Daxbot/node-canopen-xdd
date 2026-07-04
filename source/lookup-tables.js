@@ -53,8 +53,8 @@ const XDD_TO_ACCESS = {
     'readOnly':        AccessType.READ_ONLY,
     'read':            AccessType.READ_ONLY,
     'readWrite':       AccessType.READ_WRITE,
-    'readWriteInput':  AccessType.READ_WRITE,
-    'readWriteOutput': AccessType.READ_WRITE,
+    'readWriteInput':  AccessType.READ_WRITE_INPUT,
+    'readWriteOutput': AccessType.READ_WRITE_OUTPUT,
     'writeOnly':       AccessType.WRITE_ONLY,
     'write':           AccessType.WRITE_ONLY,
     'const':           AccessType.CONSTANT,
@@ -63,10 +63,12 @@ const XDD_TO_ACCESS = {
 
 /** Map from CANopen AccessType values to XDD access attribute values. */
 const ACCESS_TO_XDD = {
-    [AccessType.READ_ONLY]:  'readOnly',
-    [AccessType.READ_WRITE]: 'readWrite',
-    [AccessType.WRITE_ONLY]: 'writeOnly',
-    [AccessType.CONSTANT]:   'const',
+    [AccessType.READ_ONLY]:         'readOnly',
+    [AccessType.READ_WRITE]:        'readWrite',
+    [AccessType.READ_WRITE_INPUT]:  'readWriteInput',
+    [AccessType.READ_WRITE_OUTPUT]: 'readWriteOutput',
+    [AccessType.WRITE_ONLY]:        'writeOnly',
+    [AccessType.CONSTANT]:          'const',
 };
 
 /** Map from baud rate numbers (bps) to XDD baud rate strings. */

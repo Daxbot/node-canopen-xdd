@@ -170,8 +170,7 @@ function _buildVarEntry(attrs, param, objectType) {
     }
 
     if (accessType === undefined) {
-        const pdoMap = attrs.PDOmapping;
-        accessType = (pdoMap === 'no') ? AccessType.READ_ONLY : AccessType.READ_WRITE;
+        accessType = AccessType.READ_ONLY;
     }
 
     if (dataType === undefined) {
@@ -184,6 +183,12 @@ function _buildVarEntry(attrs, param, objectType) {
 
     const props = param ? _getPropertiesFromParam(param) : {};
     const stringLength = props['CO_stringLengthMin'] ? parseInt(props['CO_stringLengthMin']) : undefined;
+
+    // BITSTRING without CO_stringLengthMin is an unbounded blob → DOMAIN (0x000F).
+    // BITSTRING with CO_stringLengthMin is a fixed-size byte array → OCTET_STRING (0x000A).
+    if (dataType === DataType.OCTET_STRING && stringLength === undefined) {
+        dataType = DataType.DOMAIN;
+    }
 
     return {
         parameterName: name,
@@ -294,8 +299,9 @@ function parseXdd(xmlString) {
 
     // ── Device identity ───────────────────────────────────────────────────────
     let vendorName   = '';
-    let vendorNumber = 0;
+    let vendorNumber = '';
     let productName  = '';
+    let productNumber = '';
 
     if (deviceBody) {
         const identity = deviceBody['DeviceIdentity'] && deviceBody['DeviceIdentity'][0];
@@ -306,12 +312,15 @@ function parseXdd(xmlString) {
             }
             if (identity.vendorID && identity.vendorID[0]) {
                 const vi    = identity.vendorID[0];
-                const viStr = (typeof vi === 'object') ? (vi._ || '0') : String(vi);
-                vendorNumber = parseInt(viStr) || 0;
+                vendorNumber = (typeof vi === 'object') ? (vi._ || '0') : String(vi);
             }
             if (identity.productName && identity.productName[0]) {
                 const pn = identity.productName[0];
                 productName = (typeof pn === 'object') ? (pn._ || '') : String(pn);
+            }
+            if (identity.productID && identity.productID[0]) {
+                const pi = identity.productID[0];
+                productNumber = (typeof pi === 'object') ? (pi._ || '') : String(pi);
             }
         }
     }
@@ -420,12 +429,25 @@ function parseXdd(xmlString) {
                                 const maxSub = defVal !== undefined
                                     ? (parseInt(defVal, String(defVal).startsWith('0x') ? 16 : 10) || 0)
                                     : 0;
+
+                                // Use actual parameterName and accessType from XDD if available
+                                let sub0Name = subAttrs.name || 'Max sub-index';
+                                let sub0Access = AccessType.READ_ONLY;
+                                if (subParam) {
+                                    const label = _getLabelFromParam(subParam);
+                                    if (label) sub0Name = label;
+                                    const pAttrs = subParam['$'] || {};
+                                    if (pAttrs.access) {
+                                        sub0Access = XDD_TO_ACCESS[pAttrs.access] ?? AccessType.READ_ONLY;
+                                    }
+                                }
+
                                 subs[0] = {
-                                    parameterName: 'Max sub-index',
+                                    parameterName: sub0Name,
                                     objectType:    ObjectType.VAR,
                                     dataType:      DataType.UNSIGNED8,
-                                    accessType:    AccessType.READ_ONLY,
-                                    defaultValue:  String(maxSub),
+                                    accessType:    sub0Access,
+                                    defaultValue:  defVal !== undefined ? defVal : String(maxSub),
                                     pdoMapping:    false,
                                 };
                             } else {
@@ -460,7 +482,15 @@ function parseXdd(xmlString) {
     }
 
     // ── Build nested EdsModel ─────────────────────────────────────────────────
-    const vendorNumHex = `0x${(vendorNumber >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
+    const objKeys = Object.keys(objects).map(Number);
+    const nrOfRXPDO = objKeys.filter(k => k >= 0x1400 && k <= 0x15FF).length;
+    const nrOfTXPDO = objKeys.filter(k => k >= 0x1800 && k <= 0x19FF).length;
+
+    // Normalize vendorNumber to padded 8-digit hex format (e.g. '0x00000001').
+    const rawVN = vendorNumber || '0';
+    const vendorNumHex = /^0[xX]/.test(rawVN)
+        ? `0x${parseInt(rawVN, 16).toString(16).toUpperCase().padStart(8, '0')}`
+        : `0x${(parseInt(rawVN, 10) >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
 
     return {
         fileInfo: {
@@ -480,9 +510,8 @@ function parseXdd(xmlString) {
             vendorName,
             vendorNumber:             vendorNumHex,
             productName,
-            productNumber:            '0x00000000',
-            revisionNumber:           '0x00000000',
-            orderCode:                '',
+            productNumber:            productNumber || '0',
+            revisionNumber:           '0',
             baudRate10:               baudRates.includes(10000),
             baudRate20:               baudRates.includes(20000),
             baudRate50:               baudRates.includes(50000),
@@ -496,8 +525,8 @@ function parseXdd(xmlString) {
             granularity,
             dynamicChannelsSupported: 0,
             groupMessaging:           false,
-            nrOfRXPDO:                0,
-            nrOfTXPDO:                0,
+            nrOfRXPDO,
+            nrOfTXPDO,
             lssSupported,
         },
         dummyUsage,
