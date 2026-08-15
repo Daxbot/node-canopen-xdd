@@ -14,38 +14,36 @@ const { DATATYPE_TO_XDD, ACCESS_TO_XDD, BAUD_TO_XDD } = require('./lookup-tables
 // ─── Conversion helpers ───────────────────────────────────────────────────────
 
 /**
- * Parse an EDS date string ("MM-DD-YYYY") and optional time string
- * ("H:MMam/pm") into an ISO date string suitable for XDD attributes.
- * Falls back to current date on parse failure.
+ * Convert an EDS date string ("MM-DD-YYYY") to an xsd:date string
+ * ("YYYY-MM-DD"). Purely textual — the calendar date is preserved as-is,
+ * with no timezone conversion (a UTC round-trip here used to shift the
+ * date by a day for zones west of UTC). Falls back to today's local date.
  * @private
  */
-function _parseEdsDate(dateStr, timeStr) {
-    try {
-        if (!dateStr) {
-            throw new Error();
-        }
-        const [mm, dd, yyyy] = (dateStr || '').split('-');
-
-        let hours = 0, minutes = 0;
-        if (timeStr) {
-            const m = /^(\d+):(\d+)(AM|PM)$/i.exec(timeStr);
-            if (m) {
-                hours   = parseInt(m[1]) % 12 + (m[3].toUpperCase() === 'PM' ? 12 : 0);
-                minutes = parseInt(m[2]);
-            }
-        }
-
-        const d = new Date(
-            parseInt(yyyy), parseInt(mm) - 1, parseInt(dd),
-            hours, minutes
-        );
-        if (isNaN(d.getTime())) {
-            throw new Error();
-        }
-        return d.toISOString().split('T')[0];
-    } catch {
-        return new Date().toISOString().split('T')[0];
+function _isoDate(dateStr) {
+    const m = /^(\d{1,2})-(\d{1,2})-(\d{4})$/.exec(String(dateStr || '').trim());
+    if (m) {
+        return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
     }
+    const d = new Date();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+/**
+ * Convert an EDS time string ("H:MMam/pm") to an xsd:time string
+ * ("HH:MM:SS", no timezone — wall-clock time preserved as-is).
+ * Falls back to midnight.
+ * @private
+ */
+function _isoTime(timeStr) {
+    const m = /^(\d{1,2}):(\d{2})(AM|PM)$/i.exec(String(timeStr || '').trim());
+    if (!m) {
+        return '00:00:00';
+    }
+    const hours = parseInt(m[1]) % 12 + (m[3].toUpperCase() === 'PM' ? 12 : 0);
+    return `${String(hours).padStart(2, '0')}:${m[2]}:00`;
 }
 
 /**
@@ -67,15 +65,6 @@ function _parseNum(s) {
         return parseInt(s) || 0;
     }
     return 0;
-}
-
-/** @private */
-function _isoTime(d) {
-    try {
-        return new Date(d).toISOString().split('T')[1].replace('Z', '') + '0000000+00:00';
-    } catch {
-        return new Date().toISOString().split('T')[1].replace('Z', '') + '0000000+00:00';
-    }
 }
 
 // ─── XML helpers ──────────────────────────────────────────────────────────────
@@ -239,14 +228,25 @@ function serializeXdd(model, outputFileName) {
     const createdBy   = fi.createdBy    || '';
     const modifiedBy  = fi.modifiedBy   || '';
 
-    const creationDateIso     = _parseEdsDate(fi.creationDate,     fi.creationTime);
-    const modificationDateIso = _parseEdsDate(fi.modificationDate, fi.modificationTime);
+    const creationDateIso     = _isoDate(fi.creationDate);
+    const creationTimeIso     = _isoTime(fi.creationTime);
+    const modificationDateIso = _isoDate(fi.modificationDate);
+    const modificationTimeIso = _isoTime(fi.modificationTime);
 
-    const vendorName   = di.vendorName  || '';
-    const vendorNumber = _parseNum(di.vendorNumber);
-    const productName  = di.productName || '';
-    const granularity  = di.granularity || 0;
-    const lssSupported = di.lssSupported || false;
+    const description  = fi.description || '';
+
+    const vendorName    = di.vendorName     || '';
+    const vendorNumber  = _parseNum(di.vendorNumber);
+    const productName   = di.productName    || '';
+    const productNumber = di.productNumber  || '';
+    const revisionNumber = di.revisionNumber || '0';
+    const orderCode     = di.orderCode      || '';
+    const granularity   = di.granularity    || 0;
+    const lssSupported  = di.lssSupported   || false;
+    const dynamicChannels = di.dynamicChannelsSupported || 0;
+    const groupMessaging  = di.groupMessaging || false;
+    const bootUpMaster    = di.simpleBootUpMaster || false;
+    const bootUpSlave     = di.simpleBootUpSlave || false;
     const dummyUsage   = model.dummyUsage || {};
     const objects      = model.objects    || {};
     const { rx: nrOfRxPDO, tx: nrOfTxPDO } = countRxTxPdo(objects);
@@ -334,9 +334,14 @@ function serializeXdd(model, outputFileName) {
         .filter(Boolean)
         .join('\n') || '          <supportedBaudRate value="250 Kbps" />';
 
+    // Look up declarations case-insensitively — older canopen-eds parses
+    // produced lowercase 'dummyNNNN' keys.
+    const dummyUsageLower = Object.fromEntries(
+        Object.entries(dummyUsage).map(([k, v]) => [k.toLowerCase(), v])
+    );
     const dummyUsageXml = [1, 2, 3, 4, 5, 6, 7].map(i => {
-        const key = `Dummy${String(i).padStart(4, '0')}`;
-        const val = dummyUsage[key] ? 1 : 0;
+        const key = `dummy${String(i).padStart(4, '0')}`;
+        const val = dummyUsageLower[key] ? 1 : 0;
         return `          <dummy entry="Dummy${String(i).padStart(4, '0')}=${val}" />`;
     }).join('\n');
 
@@ -359,13 +364,17 @@ function serializeXdd(model, outputFileName) {
         <ProfileTechnology>CANopen</ProfileTechnology>
       </ISO15745Reference>
     </ProfileHeader>
-    <ProfileBody xmlns:q1="http://www.canopen.org/xml/1.1" xsi:type="q1:ProfileBody_Device_CANopen" formatName="CANopen" formatVersion="1.0" fileName="${_xmlEscape(fileName)}" fileCreator="${_xmlEscape(createdBy)}" fileCreationDate="${creationDateIso}" fileCreationTime="${_isoTime(creationDateIso)}" fileModifiedBy="${_xmlEscape(modifiedBy)}" fileModificationDate="${modificationDateIso}" fileModificationTime="${_isoTime(modificationDateIso)}" fileVersion="${fileVersion}" supportedLanguages="en" xmlns="">
+    <ProfileBody xmlns:q1="http://www.canopen.org/xml/1.1" xsi:type="q1:ProfileBody_Device_CANopen" formatName="CANopen" formatVersion="1.0" fileName="${_xmlEscape(fileName)}" fileCreator="${_xmlEscape(createdBy)}" fileCreationDate="${creationDateIso}" fileCreationTime="${creationTimeIso}" fileModifiedBy="${_xmlEscape(modifiedBy)}" fileModificationDate="${modificationDateIso}" fileModificationTime="${modificationTimeIso}" fileVersion="${fileVersion}" supportedLanguages="en" xmlns="">
       <q1:DeviceIdentity>
         <q1:vendorName>${_xmlEscape(vendorName)}</q1:vendorName>
         <q1:vendorID>${vendorNumber}</q1:vendorID>
         <q1:productName>${_xmlEscape(productName)}</q1:productName>
-        <q1:productID></q1:productID>
-        <q1:version versionType="SW">0</q1:version>
+        <q1:productID>${_xmlEscape(productNumber)}</q1:productID>
+        <q1:productText>
+          <q1:description lang="en">${_xmlEscape(description)}</q1:description>
+        </q1:productText>
+        <q1:orderNumber>${_xmlEscape(orderCode)}</q1:orderNumber>
+        <q1:version versionType="SW">${_xmlEscape(revisionNumber)}</q1:version>
         <q1:version versionType="FW">0</q1:version>
         <q1:version versionType="HW">0</q1:version>
       </q1:DeviceIdentity>
@@ -407,7 +416,7 @@ ${parameters.join('\n')}
         <ProfileTechnology>CANopen</ProfileTechnology>
       </ISO15745Reference>
     </ProfileHeader>
-    <ProfileBody xmlns:q2="http://www.canopen.org/xml/1.1" xsi:type="q2:ProfileBody_CommunicationNetwork_CANopen" formatName="CANopen" formatVersion="1.0" fileName="${_xmlEscape(fileName)}" fileCreator="${_xmlEscape(createdBy)}" fileCreationDate="${creationDateIso}" fileCreationTime="${_isoTime(creationDateIso)}" fileModificationDate="${modificationDateIso}" fileModificationTime="${_isoTime(modificationDateIso)}" fileVersion="${fileVersion}" supportedLanguages="en" xmlns="">
+    <ProfileBody xmlns:q2="http://www.canopen.org/xml/1.1" xsi:type="q2:ProfileBody_CommunicationNetwork_CANopen" formatName="CANopen" formatVersion="1.0" fileName="${_xmlEscape(fileName)}" fileCreator="${_xmlEscape(createdBy)}" fileCreationDate="${creationDateIso}" fileCreationTime="${creationTimeIso}" fileModifiedBy="${_xmlEscape(modifiedBy)}" fileModificationDate="${modificationDateIso}" fileModificationTime="${modificationTimeIso}" fileVersion="${fileVersion}" supportedLanguages="en" xmlns="">
       <ApplicationLayers>
         <q2:CANopenObjectList>
 ${objectList.join('\n')}
@@ -424,8 +433,8 @@ ${baudRateXml}
         </PhysicalLayer>
       </TransportLayers>
       <NetworkManagement>
-        <CANopenGeneralFeatures granularity="${granularity}" nrOfRxPDO="${nrOfRxPDO}" nrOfTxPDO="${nrOfTxPDO}" layerSettingServiceSlave="${lssStr}" />
-        <CANopenMasterFeatures />
+        <CANopenGeneralFeatures granularity="${granularity}" dynamicChannels="${dynamicChannels}" groupMessaging="${groupMessaging ? 'true' : 'false'}" bootUpSlave="${bootUpSlave ? 'true' : 'false'}" nrOfRxPDO="${nrOfRxPDO}" nrOfTxPDO="${nrOfTxPDO}" layerSettingServiceSlave="${lssStr}" />
+        <CANopenMasterFeatures bootUpMaster="${bootUpMaster ? 'true' : 'false'}" />
       </NetworkManagement>
     </ProfileBody>
   </ISO15745Profile>
