@@ -751,6 +751,19 @@ function exportOD(eds, filename = 'OD') {
 function exportODHeader(filename, odname, eds, prepared) {
     const lines = [];
 
+    // The banner reads the plain model shape (fileInfo/deviceInfo), which is
+    // what exportOD normalizes to for both Eds instances and parsed models.
+    const model = eds._model || eds;
+    const fi = model.fileInfo   || {};
+    const di = model.deviceInfo || {};
+
+    const joinDate = (date, time) => [date, time].filter(Boolean).join(' ') || 'unknown';
+
+    let vendorId = String(di.vendorNumber ?? '0x00000000');
+    if (!/^0[xX]/.test(vendorId)) {
+        vendorId = `0x${(parseInt(vendorId, 10) >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
+    }
+
     lines.push(`/*******************************************************************************
     CANopen Object Dictionary definition for CANopenNode V4
 
@@ -764,21 +777,21 @@ function exportODHeader(filename, odname, eds, prepared) {
 
     File info:
         File Names:   ${filename}.h; ${filename}.c
-        Project File: ${eds.fileName || 'unknown'}
-        File Version: ${eds.fileVersion || 1}
+        Project File: ${fi.fileName || 'unknown'}
+        File Version: ${fi.fileVersion || 1}
 
-        Created:      ${new Date().toLocaleString()}
-        Created By:   node-canopen
-        Modified:     ${new Date().toLocaleString()}
-        Modified By:  node-canopen
+        Created:      ${joinDate(fi.creationDate, fi.creationTime)}
+        Created By:   ${fi.createdBy || 'node-canopen'}
+        Modified:     ${joinDate(fi.modificationDate, fi.modificationTime)}
+        Modified By:  ${fi.modifiedBy || 'node-canopen'}
 
     Device Info:
-        Vendor Name:  ${eds.vendorName || ''}
-        Vendor ID:    0x${(eds.vendorNumber || 0).toString(16)}
-        Product Name: ${eds.productName || ''}
-        Product ID:   ${eds.productNumber || ''}
+        Vendor Name:  ${di.vendorName || ''}
+        Vendor ID:    ${vendorId}
+        Product Name: ${di.productName || ''}
+        Product ID:   ${di.productNumber || ''}
 
-        Description:  ${eds.description || ''}
+        Description:  ${fi.description || ''}
 *******************************************************************************/
 
 #ifndef ${odname}_H
