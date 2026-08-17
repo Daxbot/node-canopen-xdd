@@ -38,35 +38,45 @@ function _forceExplicitArray(node) {
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
-/** Convert an ISO date string or Date → EDS "MM-DD-YYYY" string. @private */
-function _formatDate(d) {
-    try {
-        const dt = new Date(d);
-        const mm = String(dt.getMonth() + 1).padStart(2, '0');
-        const dd = String(dt.getDate()).padStart(2, '0');
-        return `${mm}-${dd}-${dt.getFullYear()}`;
-    } catch {
-        return '01-01-1970';
+/**
+ * Convert an xsd:date string ("YYYY-MM-DD", optionally with a suffix) to an
+ * EDS "MM-DD-YYYY" string. Purely textual — the calendar date is preserved
+ * as-is, with no timezone conversion (reading a UTC instant with local
+ * getters used to shift the date by a day for zones west of UTC).
+ * Falls back to today's local date.
+ * @private
+ */
+function _formatDate(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso ?? '').trim());
+    if (m) {
+        return `${m[2]}-${m[3]}-${m[1]}`;
     }
+    const dt = new Date();
+    const mm = String(dt.getMonth() + 1).padStart(2, '0');
+    const dd = String(dt.getDate()).padStart(2, '0');
+    return `${mm}-${dd}-${dt.getFullYear()}`;
 }
 
-/** Convert an ISO date string or Date → EDS "H:MMam/pm" string. @private */
-function _formatTime(d) {
-    try {
-        const dt = new Date(d);
-        let h = dt.getHours();
-        const m = String(dt.getMinutes()).padStart(2, '0');
-        const ampm = h >= 12 ? 'PM' : 'AM';
-        if (h > 12) {
-            h -= 12;
-        }
-        if (h === 0) {
-            h = 12;
-        }
-        return `${h}:${m}${ampm}`;
-    } catch {
+/**
+ * Convert an xsd:time string ("HH:MM[:SS][zone]") to an EDS "H:MMam/pm"
+ * string. Purely textual — the wall-clock time is preserved as-is.
+ * @private
+ */
+function _formatTime(iso) {
+    const m = /^(\d{2}):(\d{2})/.exec(String(iso ?? '').trim());
+    if (!m) {
         return '12:00AM';
     }
+    let h = parseInt(m[1]);
+    const mins = m[2];
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    if (h > 12) {
+        h -= 12;
+    }
+    if (h === 0) {
+        h = 12;
+    }
+    return `${h}:${mins}${ampm}`;
 }
 
 // ─── Parameter helpers ────────────────────────────────────────────────────────
@@ -258,9 +268,11 @@ function parseXdd(xmlString) {
     let fileName         = 'device.xdd';
     let fileVersion      = '1';
     let createdBy        = '';
-    let creationDateRaw  = new Date();
+    let creationDateRaw  = '';
+    let creationTimeRaw  = '';
     let modifiedBy       = '';
-    let modificationDateRaw = new Date();
+    let modificationDateRaw = '';
+    let modificationTimeRaw = '';
 
     const parameterMap = {};
 
@@ -271,16 +283,10 @@ function parseXdd(xmlString) {
         createdBy   = attrs.fileCreator    || '';
         modifiedBy  = attrs.fileModifiedBy || '';
 
-        if (attrs.fileCreationDate) {
-            try {
-                creationDateRaw = new Date(attrs.fileCreationDate);
-            } catch { /* keep default */ }
-        }
-        if (attrs.fileModificationDate) {
-            try {
-                modificationDateRaw = new Date(attrs.fileModificationDate);
-            } catch { /* keep default */ }
-        }
+        creationDateRaw     = attrs.fileCreationDate     || '';
+        creationTimeRaw     = attrs.fileCreationTime     || '';
+        modificationDateRaw = attrs.fileModificationDate || '';
+        modificationTimeRaw = attrs.fileModificationTime || '';
 
         // Build parameter uniqueID lookup map
         const appProcess = deviceBody['ApplicationProcess'] && deviceBody['ApplicationProcess'][0];
@@ -302,6 +308,9 @@ function parseXdd(xmlString) {
     let vendorNumber = '';
     let productName  = '';
     let productNumber = '';
+    let description  = '';
+    let orderCode    = '';
+    let revisionNumber = '0';
 
     if (deviceBody) {
         const identity = deviceBody['DeviceIdentity'] && deviceBody['DeviceIdentity'][0];
@@ -322,6 +331,23 @@ function parseXdd(xmlString) {
                 const pi = identity.productID[0];
                 productNumber = (typeof pi === 'object') ? (pi._ || '') : String(pi);
             }
+            const productText = identity.productText && identity.productText[0];
+            if (productText && productText.description && productText.description[0]) {
+                const de = productText.description[0];
+                description = (typeof de === 'object') ? (de._ || '') : String(de);
+            }
+            if (identity.orderNumber && identity.orderNumber[0]) {
+                const on = identity.orderNumber[0];
+                orderCode = (typeof on === 'object') ? (on._ || '') : String(on);
+            }
+            for (const version of (identity.version || [])) {
+                const vAttrs = (typeof version === 'object' && version['$']) || {};
+                if (vAttrs.versionType === 'SW') {
+                    revisionNumber = (typeof version === 'object')
+                        ? String(version._ ?? '0')
+                        : String(version);
+                }
+            }
         }
     }
 
@@ -329,6 +355,10 @@ function parseXdd(xmlString) {
     const baudRates  = [];
     let granularity  = 0;
     let lssSupported = false;
+    let dynamicChannelsSupported = 0;
+    let groupMessaging     = false;
+    let simpleBootUpMaster = false;
+    let simpleBootUpSlave  = false;
     const dummyUsage = {};
     const objects    = {};
 
@@ -362,6 +392,22 @@ function parseXdd(xmlString) {
                 }
                 if (gf.layerSettingServiceSlave !== undefined) {
                     lssSupported = gf.layerSettingServiceSlave === 'true';
+                }
+                if (gf.dynamicChannels !== undefined) {
+                    dynamicChannelsSupported = parseInt(gf.dynamicChannels) || 0;
+                }
+                if (gf.groupMessaging !== undefined) {
+                    groupMessaging = gf.groupMessaging === 'true';
+                }
+                if (gf.bootUpSlave !== undefined) {
+                    simpleBootUpSlave = gf.bootUpSlave === 'true';
+                }
+            }
+            const masterFeatures = netMgmt['CANopenMasterFeatures'] && netMgmt['CANopenMasterFeatures'][0];
+            if (masterFeatures && typeof masterFeatures === 'object') {
+                const mf = masterFeatures['$'] || {};
+                if (mf.bootUpMaster !== undefined) {
+                    simpleBootUpMaster = mf.bootUpMaster === 'true';
                 }
             }
         }
@@ -498,11 +544,11 @@ function parseXdd(xmlString) {
             fileVersion,
             fileRevision: '',
             edsVersion:   '4.0',
-            description:  '',
-            creationTime:     _formatTime(creationDateRaw),
+            description,
+            creationTime:     _formatTime(creationTimeRaw),
             creationDate:     _formatDate(creationDateRaw),
             createdBy,
-            modificationTime: _formatTime(modificationDateRaw),
+            modificationTime: _formatTime(modificationTimeRaw),
             modificationDate: _formatDate(modificationDateRaw),
             modifiedBy,
         },
@@ -511,7 +557,8 @@ function parseXdd(xmlString) {
             vendorNumber:             vendorNumHex,
             productName,
             productNumber:            productNumber || '0',
-            revisionNumber:           '0',
+            revisionNumber,
+            orderCode,
             baudRate10:               baudRates.includes(10000),
             baudRate20:               baudRates.includes(20000),
             baudRate50:               baudRates.includes(50000),
@@ -520,11 +567,11 @@ function parseXdd(xmlString) {
             baudRate500:              baudRates.includes(500000),
             baudRate800:              baudRates.includes(800000),
             baudRate1000:             baudRates.includes(1000000),
-            simpleBootUpMaster:       false,
-            simpleBootUpSlave:        false,
+            simpleBootUpMaster,
+            simpleBootUpSlave,
             granularity,
-            dynamicChannelsSupported: 0,
-            groupMessaging:           false,
+            dynamicChannelsSupported,
+            groupMessaging,
             nrOfRXPDO,
             nrOfTXPDO,
             lssSupported,
