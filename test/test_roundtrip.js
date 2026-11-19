@@ -238,3 +238,30 @@ describe('canopen-xdd', function () {
         });
     });
 });
+
+describe('PDOmapping', function () {
+    it('keeps the XDD PDOmapping value', function () {
+        const model = buildTestModel();
+        const values = ['TPDO', 'RPDO', 'optional', 'default'];
+        values.forEach((value, n) => {
+            model.objects[0x2100 + n] = {
+                parameterName: `Value ${value}`,
+                objectType: ObjectType.VAR,
+                dataType: DataType.UNSIGNED8,
+                accessType: AccessType.READ_WRITE,
+                defaultValue: '0',
+                pdoMapping: value,
+            };
+        });
+        model.objects[0x2104] = { ...model.objects[0x2100], pdoMapping: true };
+        model.objects[0x2105] = { ...model.objects[0x2100], pdoMapping: false };
+
+        const xml = serializeXdd(model);
+        const reparsed = parseXdd(xml);
+        values.forEach((value, n) => {
+            expect(reparsed.objects[0x2100 + n].pdoMapping).to.equal(value);
+        });
+        expect(reparsed.objects[0x2104].pdoMapping).to.equal('optional');
+        expect(reparsed.objects[0x2105].pdoMapping).to.equal(false);
+    });
+});

@@ -99,6 +99,22 @@ function _formatDefaultValue(value) {
 // ─── XML fragment builders ────────────────────────────────────────────────────
 
 /**
+ * Return the XDD PDOmapping attribute for a model pdoMapping value.
+ *
+ * The parser keeps the XDD value (no, default, optional, TPDO, RPDO) as a
+ * string. An EDS file has only a boolean, so true becomes optional.
+ * @param {boolean|string|undefined} pdoMapping
+ * @returns {string}
+ * @private
+ */
+function _pdoMappingAttr(pdoMapping) {
+    if (['no', 'default', 'optional', 'TPDO', 'RPDO'].includes(pdoMapping)) {
+        return pdoMapping;
+    }
+    return pdoMapping ? 'optional' : 'no';
+}
+
+/**
  * Build CANopenNode custom <q1:property> tags for an entry.
  * - CO_stringLengthMin (model `stringLength`): minimum string buffer size.
  * - CO_storageGroup (model `storageLocation`): storage group, top-level objects only.
@@ -284,7 +300,7 @@ function serializeXdd(model, outputFileName) {
 
         if (objectType === ObjectType.VAR || objectType === ObjectType.DOMAIN) {
             parameters.push(_buildVarParameterXml(uid, entry));
-            const pdoMap = entry.pdoMapping ? 'optional' : 'no';
+            const pdoMap = _pdoMappingAttr(entry.pdoMapping);
             objectList.push(
                 `          <CANopenObject index="${indexHex}" name="${_xmlEscape(entry.parameterName || '')}" objectType="${objectType}" PDOmapping="${pdoMap}" uniqueIDRef="${uid}" />`
             );
@@ -319,7 +335,7 @@ function serializeXdd(model, outputFileName) {
                 const subUid = `UID_SUB_${indexHex}${si.toString(16).toUpperCase().padStart(2, '0')}`;
                 parameters.push(_buildVarParameterXml(subUid, sub));
                 subXml.push(
-                    `            <CANopenSubObject subIndex="${si.toString(16).toUpperCase().padStart(2, '0')}" name="${_xmlEscape(sub.parameterName || '')}" objectType="7" PDOmapping="${sub.pdoMapping ? 'optional' : 'no'}" uniqueIDRef="${subUid}" />`
+                    `            <CANopenSubObject subIndex="${si.toString(16).toUpperCase().padStart(2, '0')}" name="${_xmlEscape(sub.parameterName || '')}" objectType="7" PDOmapping="${_pdoMappingAttr(sub.pdoMapping)}" uniqueIDRef="${subUid}" />`
                 );
             }
 
